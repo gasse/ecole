@@ -4,6 +4,7 @@
 #include <exception>
 #include <mutex>
 #include <string>
+// #include <iostream>
 
 #include <scip/scip.h>
 #include <scip/scipdefplugins.h>
@@ -80,27 +81,45 @@ bool Model::operator!=(Model const& other) const noexcept {
 	return !(*this == other);
 }
 
-Model Model::from_file(const std::string& filename) {
-	auto model = Model{};
-	scip::call(SCIPreadProb, model.get_scip_ptr(), filename.c_str(), nullptr);
-	return model;
+Stage Model::getStage() {
+	switch (SCIPgetStage(get_scip_ptr())) {
+		case SCIP_STAGE_INIT:
+			return Stage::Init;
+		case SCIP_STAGE_PROBLEM:
+			return Stage::Problem;
+		case SCIP_STAGE_TRANSFORMING:
+			return Stage::Transforming;
+		case SCIP_STAGE_TRANSFORMED:
+			return Stage::Transformed;
+		case SCIP_STAGE_INITPRESOLVE:
+			return Stage::InitPresolve;
+		case SCIP_STAGE_PRESOLVING:
+			return Stage::Presolving;
+		case SCIP_STAGE_EXITPRESOLVE:
+			return Stage::ExitPresolve;
+		case SCIP_STAGE_PRESOLVED:
+			return Stage::Presolved;
+		case SCIP_STAGE_INITSOLVE:
+			return Stage::InitSolve;
+		case SCIP_STAGE_SOLVING:
+			return Stage::Solving;
+		case SCIP_STAGE_SOLVED:
+			return Stage::Solved;
+		case SCIP_STAGE_EXITSOLVE:
+			return Stage::ExitSolve;
+		case SCIP_STAGE_FREETRANS:
+			return Stage::FreeTrans;
+		case SCIP_STAGE_FREE:
+			return Stage::Free;
+		default:
+			throw Exception("Unexpected SCIP_STAGE value.");
+	}
 }
 
-// Assumptions made while defining ParamType
-static_assert(
-	std::is_same<SCIP_Bool, param_t<ParamType::Bool>>::value,
-	"SCIP bool type is not the same as the one redefined by Ecole");
-static_assert(
-	std::is_same<SCIP_Longint, param_t<ParamType::LongInt>>::value,
-	"SCIP long int type is not the same as the one redefined by Ecole");
-static_assert(
-	std::is_same<SCIP_Real, param_t<ParamType::Real>>::value,
-	"SCIP real type is not the same as the one redefined by Ecole");
-
-ParamType Model::get_param_type(const char* name) const {
-	auto* scip_param = SCIPgetParam(get_scip_ptr(), name);
+ParamType Model::get_param_type(std::string const & name) const {
+	auto* scip_param = SCIPgetParam(get_scip_ptr(), name.c_str());
 	if (!scip_param)
-		throw make_exception(SCIP_PARAMETERUNKNOWN);
+		throw Exception(fmt::format("Unknown parameter '{}'", name));
 	else
 		switch (SCIPparamGetType(scip_param)) {
 		case SCIP_PARAMTYPE_BOOL:
@@ -118,25 +137,25 @@ ParamType Model::get_param_type(const char* name) const {
 		default:
 			assert(false);  // All enum value should be handled
 			// Non void return for optimized build
-			throw Exception("Could not find type for given parameter");
+			throw Exception(fmt::format("Unrecognized type for parameter '{}'", name));
 		}
 }
 
-ParamType Model::get_param_type(std::string const& name) const {
-	return get_param_type(name.c_str());
-}
-
 param_t<ParamType::Int> Model::seed() const {
-	return get_param_explicit<param_t<ParamType::Int>>("randomization/randomseedshift");
+	return get_param<param_t<ParamType::Int>>("randomization/randomseedshift");
 }
 
 template <typename T> static auto mod(T num, T div) noexcept {
 	return (num % div + div) % div;
 }
 
+void Model::readProb(const std::string& filename) {
+	scip::call(SCIPreadProb, get_scip_ptr(), filename.c_str(), nullptr);
+}
+
 void Model::seed(param_t<ParamType::Int> seed_v) {
-	using seed_t = param_t<ParamType::Int>;
-	set_param_explicit<seed_t>("randomization/randomseedshift", std::abs(seed_v));
+	set_param("randomization/randomseedshift", seed_v);
+	set_param("randomization/permutationseed", seed_v);
 }
 
 void Model::solve() {
@@ -295,70 +314,6 @@ double const Model::LambdaBranchRule::maxbounddist;
 void Model::set_branch_rule(BranchFunc const& func) {
 	LambdaBranchRule::set_branch_func(*this, func);
 }
-
-namespace internal {
-
-template <> void set_scip_param(SCIP* scip, const char* name, SCIP_Bool value) {
-	scip::call(SCIPsetBoolParam, scip, name, value);
-}
-template <> void set_scip_param(SCIP* scip, const char* name, char value) {
-	scip::call(SCIPsetCharParam, scip, name, value);
-}
-template <> void set_scip_param(SCIP* scip, const char* name, int value) {
-	scip::call(SCIPsetIntParam, scip, name, value);
-}
-template <> void set_scip_param(SCIP* scip, const char* name, SCIP_Longint value) {
-	scip::call(SCIPsetLongintParam, scip, name, value);
-}
-template <> void set_scip_param(SCIP* scip, const char* name, SCIP_Real value) {
-	scip::call(SCIPsetRealParam, scip, name, value);
-}
-template <> void set_scip_param(SCIP* scip, const char* name, const char* value) {
-	scip::call(SCIPsetStringParam, scip, name, value);
-}
-template <> void set_scip_param(SCIP* scip, const char* name, std::string const& value) {
-	return set_scip_param(scip, name, value.c_str());
-}
-
-template <> SCIP_Bool get_scip_param(SCIP* scip, const char* name) {
-	SCIP_Bool value{};
-	scip::call(SCIPgetBoolParam, scip, name, &value);
-	return value;
-}
-template <> char get_scip_param(SCIP* scip, const char* name) {
-	char value{};
-	scip::call(SCIPgetCharParam, scip, name, &value);
-	return value;
-}
-template <> int get_scip_param(SCIP* scip, const char* name) {
-	int value{};
-	scip::call(SCIPgetIntParam, scip, name, &value);
-	return value;
-}
-template <> SCIP_Longint get_scip_param(SCIP* scip, const char* name) {
-	SCIP_Longint value{};
-	scip::call(SCIPgetLongintParam, scip, name, &value);
-	return value;
-}
-template <> SCIP_Real get_scip_param(SCIP* scip, const char* name) {
-	SCIP_Real value{};
-	scip::call(SCIPgetRealParam, scip, name, &value);
-	return value;
-}
-template <> const char* get_scip_param(SCIP* scip, const char* name) {
-	char* ptr = nullptr;
-	scip::call(SCIPgetStringParam, scip, name, &ptr);
-	return ptr;
-}
-
-template <> Cast_SFINAE<char, const char*>::operator char() const {
-	if (std::strlen(val) == 1)
-		return *val;
-	else
-		throw scip::Exception("Can only convert a string with a single character to a char");
-}
-
-}  // namespace internal
 
 }  // namespace scip
 }  // namespace ecole

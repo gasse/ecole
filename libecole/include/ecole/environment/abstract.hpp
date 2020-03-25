@@ -116,7 +116,7 @@ std::tuple<O, bool> Environment<A, O, H>::reset(ptr<scip::Model>&& model) {
 		auto done = std::get<1>(result);
 		can_transition = !done;
 		return result;
-	} catch (std::exception const&) {
+	} catch (std::exception const&) {  // MG: is this mechanism useful at all ?
 		can_transition = false;
 		throw;
 	}
@@ -129,18 +129,20 @@ std::tuple<O, bool> Environment<A, O, H>::reset(scip::Model&& model) {
 
 template <typename A, typename O, template <typename...> class H>
 std::tuple<O, bool> Environment<A, O, H>::reset(std::string const& filename) {
-	return reset(scip::Model::from_file(filename));
+	auto m = scip::Model{};
+	m.readProb(filename);
+	return reset(std::move(m));
 }
 
 template <typename A, typename O, template <typename...> class H>
 auto Environment<A, O, H>::step(A action) -> std::tuple<O, Reward, bool, info_t> {
-	if (!can_transition) throw environment::Exception("Environment need to be reset.");
+	if (!can_transition) throw environment::Exception("Environment need to be reset.");  // MG: misleading, as reset may not result in can_transition == True
 	try {
 		auto result = _step(std::move(action));
 		auto done = std::get<2>(result);
 		can_transition = !done;
 		return result;
-	} catch (std::exception const&) {
+	} catch (std::exception const&) {  // MG: is this mechanism useful at all ?
 		can_transition = false;
 		throw;
 	}

@@ -42,12 +42,14 @@ TEST_CASE("Equality comparison") {
 }
 
 TEST_CASE("Create model from file") {
-	auto model = scip::Model::from_file(problem_file);
+	auto model = scip::Model();
+	model.readProb(problem_file);
 }
 
 TEST_CASE("Raise if file does not exist") {
 	auto guard = ScipNoErrorGuard{};
-	REQUIRE_THROWS_AS(scip::Model::from_file("/does_not_exist.mps"), scip::Exception);
+	auto model = scip::Model();
+	REQUIRE_THROWS_AS(model.readProb("/does_not_exist.mps"), scip::Exception);
 }
 
 TEST_CASE("Model solving") {

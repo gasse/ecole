@@ -36,6 +36,7 @@ pybind11_add_module(
 	src/ecole/termination.cpp
 	src/ecole/configuring.cpp
 	src/ecole/branching.cpp
+	src/ecole/configuring.cpp
 )
 
 target_include_directories(ecole-python PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ecole)

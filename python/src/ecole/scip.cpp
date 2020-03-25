@@ -37,10 +37,10 @@ PYBIND11_MODULE(scip, m) {
 	m.doc() = "Scip wrappers for ecole.";
 
 	py11::class_<scip::Model, std::shared_ptr<scip::Model>>(m, "Model")  //
-		.def_static("from_file", &scip::Model::from_file)
-
 		.def(py11::self == py11::self)
 		.def(py11::self != py11::self)
+
+		.def(py11::init<>())
 
 		.def("clone", [](scip::Model const& model) { return model; })
 
@@ -69,6 +69,7 @@ PYBIND11_MODULE(scip, m) {
 			[](scip::Model& model, const char* name, const char* value) {
 				model.set_param(name, value);
 			})
+		.def("readProb", &scip::Model::readProb)
 		.def("disable_cuts", &scip::Model::disable_cuts)
 		.def("disable_presolve", &scip::Model::disable_presolve);
 }

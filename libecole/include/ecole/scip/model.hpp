@@ -7,12 +7,16 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <iostream>
 
 #include <scip/scip.h>
+
+#include <fmt/format.h>
 
 #include "ecole/scip/column.hpp"
 #include "ecole/scip/row.hpp"
 #include "ecole/scip/variable.hpp"
+#include "scip/utils.hpp"
 
 namespace ecole {
 namespace scip {
@@ -28,24 +32,48 @@ template <typename T> using unique_ptr = std::unique_ptr<T, Deleter<T>>;
  */
 unique_ptr<SCIP> create();
 
+enum class Stage {
+	Init = SCIP_STAGE_INIT,  // SCIP data structures are initialized, no problem exists
+	Problem = SCIP_STAGE_PROBLEM,  // the problem is being created and modified
+	Transforming = SCIP_STAGE_TRANSFORMING,   // the problem is being transformed into solving data space
+	Transformed = SCIP_STAGE_TRANSFORMED,   // the problem was transformed into solving data space
+	InitPresolve = SCIP_STAGE_INITPRESOLVE,   // presolving is initialized
+	Presolving = SCIP_STAGE_PRESOLVING,  // the problem is being presolved
+	ExitPresolve = SCIP_STAGE_EXITPRESOLVE,  // presolving is exited
+	Presolved = SCIP_STAGE_PRESOLVED,  // the problem was presolved
+	InitSolve = SCIP_STAGE_INITSOLVE,  // the solving process data is being initialized
+	Solving = SCIP_STAGE_SOLVING, // the problem is being solved
+	Solved = SCIP_STAGE_SOLVED, // the problem was solved
+	ExitSolve = SCIP_STAGE_EXITSOLVE, // the solving process data is being freed
+	FreeTrans = SCIP_STAGE_FREETRANS,  // the transformed problem is being freed
+	Free = SCIP_STAGE_FREE  // SCIP data structures are being freed
+};
+
 /**
  * Types of parameters supported by SCIP.
  *
  * @see param_t to get the associated type.
  */
-enum class ParamType { Bool, Int, LongInt, Real, Char, String };
+enum class ParamType {
+	Bool = SCIP_PARAMTYPE_BOOL,
+	Int = SCIP_PARAMTYPE_INT,
+	LongInt = SCIP_PARAMTYPE_LONGINT,
+	Real = SCIP_PARAMTYPE_REAL,
+	Char = SCIP_PARAMTYPE_CHAR,
+	String = SCIP_PARAMTYPE_STRING
+};
 
 namespace internal {
 // Use with `param_t`.
 // File `model.cpp` contains `static_assert`s to ensure this is never out of date
 // with SCIP internals.
 template <ParamType> struct ParamType_get;
-template <> struct ParamType_get<ParamType::Bool> { using type = unsigned int; };
+template <> struct ParamType_get<ParamType::Bool> { using type = bool; };
 template <> struct ParamType_get<ParamType::Int> { using type = int; };
-template <> struct ParamType_get<ParamType::LongInt> { using type = long long int; };
-template <> struct ParamType_get<ParamType::Real> { using type = double; };
+template <> struct ParamType_get<ParamType::LongInt> { using type = SCIP_Longint; };
+template <> struct ParamType_get<ParamType::Real> { using type = SCIP_Real; };
 template <> struct ParamType_get<ParamType::Char> { using type = char; };
-template <> struct ParamType_get<ParamType::String> { using type = const char*; };
+template <> struct ParamType_get<ParamType::String> { using type = std::string; };
 }  // namespace internal
 
 /**
@@ -83,26 +111,7 @@ public:
 	bool operator==(Model const& other) const noexcept;
 	bool operator!=(Model const& other) const noexcept;
 
-	/**
-	 * Construct a model by reading a problem file supported by SCIP (LP, MPS,...).
-	 */
-	static Model from_file(std::string const& filename);
-
-	ParamType get_param_type(const char* name) const;
 	ParamType get_param_type(std::string const& name) const;
-
-	/**
-	 * Get and set parameters by their exact SCIP type.
-	 *
-	 * The method will throw an exception if the type is not *exactly* the one used
-	 * by SCIP.
-	 *
-	 * @see get_param, set_param to convert automatically.
-	 */
-	template <typename T> void set_param_explicit(const char* name, T value);
-	template <typename T> void set_param_explicit(std::string const& name, T value);
-	template <typename T> T get_param_explicit(const char* name) const;
-	template <typename T> T get_param_explicit(std::string const& name) const;
 
 	/**
 	 * Get and set parameters with automatic casting.
@@ -113,10 +122,23 @@ public:
 	 *
 	 * @see get_param_explicit, set_param_explicit to avoid any conversions.
 	 */
-	template <typename T> void set_param(const char* name, T value);
-	template <typename T> void set_param(std::string const& name, T value);
-	template <typename T> T get_param(const char* name) const;
-	template <typename T> T get_param(std::string const& name) const;
+
+	// specialization for string types
+	template <typename T>
+	typename std::enable_if<std::is_same<typename std::decay<T>::type, std::string>::value, void>::type
+	set_param(std::string const & name, T value);
+	// specialization for arithmetic types
+	template <typename T>
+	typename std::enable_if<std::is_arithmetic<typename std::decay<T>::type>::value, void>::type
+	set_param(std::string const & name, T value);
+	// specialization for string types
+	template <typename T>
+	typename std::enable_if<std::is_same<typename std::decay<T>::type, std::string>::value, T>::type
+	get_param(std::string const & name) const;
+	// specialization for arithmetic types
+	template <typename T>
+	typename std::enable_if<std::is_arithmetic<typename std::decay<T>::type>::value, T>::type
+	get_param(std::string const & name) const;
 
 	/**
 	 * Get the current random seed of the Model.
@@ -132,6 +154,8 @@ public:
 	 */
 	void seed(param_t<ParamType::Int> seed_v);
 
+	void readProb(std::string const& filename);
+
 	void disable_presolve();
 	void disable_cuts();
 
@@ -140,6 +164,8 @@ public:
 	 */
 	void solve();
 	void interrupt_solve();
+
+	Stage getStage();
 
 	bool is_solved() const noexcept;
 
@@ -166,78 +192,39 @@ private:
 
 namespace internal {
 
-// Specializations are instantiated in cpp file.
-// Having this proxy avoid specializing memeber function of Model, which is not
-// compatible with template class.
-template <typename T> void set_scip_param(SCIP* scip, const char* name, T value);
-template <typename T> T get_scip_param(SCIP* scip, const char* name);
-
-// SFINAE to check if type exists
-template <typename> struct exists { using type = void; };
-template <typename T> using exists_t = typename exists<T>::type;
-// Helper to check static cast ability
-template <typename To, typename From>
-using can_cast_t = exists_t<decltype(static_cast<To>(std::declval<From>()))>;
-
-// SFINAE default class for no available cast
-template <typename To, typename From, typename = void> struct Cast_SFINAE {
-	From val;
-	operator To() const { throw Exception("Cannot convert to the desired type"); }
-};
-
-// SFINAE for available cast
-template <typename To, typename From> struct Cast_SFINAE<To, From, can_cast_t<To, From>> {
-	From val;
-	operator To() const { return static_cast<To>(val); }
-};
-
-// Pointers must not convert to bools
-template <typename From> struct Cast_SFINAE<bool, From*> {
-	From val;
-	operator bool() const { throw Exception("Cannot convert to the desired type"); }
-};
-
-// C-string can be converted to char if single character
-template <> Cast_SFINAE<char, const char*>::operator char() const;
-
-// Don't convert std::string to const char* (dangling pointer).
-// Leave the string as it is to pass to set_param_explicit.
-template <> struct Cast_SFINAE<const char*, std::string> : public std::string {};
-
-// Helper func to deduce From type automatically
-template <typename To, typename From> To cast(From x) {
-	return Cast_SFINAE<To, From>{x};
+template<class Target, class Source>
+Target narrow_cast(Source v) {
+    auto r = static_cast<Target>(v);
+    if (static_cast<Source>(r) != v)
+        throw Exception("narrow_cast<>() failed");
+    return r;
 }
 
 }  // namespace internal
 
-template <typename T> void Model::set_param_explicit(const char* name, T value) {
-	return internal::set_scip_param<T>(get_scip_ptr(), name, value);
-}
-
-template <typename T> T Model::get_param_explicit(const char* name) const {
-	return internal::get_scip_param<T>(get_scip_ptr(), name);
-}
-
-template <typename T> void Model::set_param_explicit(std::string const& name, T value) {
-	return set_param_explicit(name.c_str(), value);
-}
-
-template <typename T> void Model::set_param(const char* name, T value) {
-	using namespace internal;
+// specialization for string types
+template <typename T>
+typename std::enable_if<std::is_same<typename std::decay<T>::type, std::string>::value, void>::type
+Model::set_param(std::string const & name, T value) {
+    using namespace internal;
+    auto scip = get_scip_ptr();
 	switch (get_param_type(name)) {
-	case ParamType::Bool:
-		return set_param_explicit(name, cast<param_t<ParamType::Bool>>(value));
-	case ParamType::Int:
-		return set_param_explicit(name, cast<param_t<ParamType::Int>>(value));
-	case ParamType::LongInt:
-		return set_param_explicit(name, cast<param_t<ParamType::LongInt>>(value));
-	case ParamType::Real:
-		return set_param_explicit(name, cast<param_t<ParamType::Real>>(value));
-	case ParamType::Char:
-		return set_param_explicit(name, cast<param_t<ParamType::Char>>(value));
 	case ParamType::String:
-		return set_param_explicit(name, cast<param_t<ParamType::String>>(value));
+        std::cout << fmt::format("Setting string parameter '{}' to value '{}' ({}).", name, value, typeid(value).name()) << '\n' << std::flush;
+        scip::call(SCIPsetStringParam, scip, name.c_str(), value.c_str());
+        break;
+	case ParamType::Char:
+		// accept strings of length 1 as chars
+		if (value.length() == 1) {
+			set_param(name, value[0]);
+			break;
+		}
+	case ParamType::Bool:
+	case ParamType::Int:
+	case ParamType::LongInt:
+	case ParamType::Real:
+		throw Exception(fmt::format("Parameter {} does not accept string values.", name));
+		break;
 	default:
 		assert(false);  // All enum value should be handled
 		// Non void return for optimized build
@@ -245,29 +232,36 @@ template <typename T> void Model::set_param(const char* name, T value) {
 	}
 }
 
-template <typename T> void Model::set_param(std::string const& name, T value) {
-	return set_param(name.c_str(), value);
-}
-
-template <typename T> T Model::get_param_explicit(std::string const& name) const {
-	return get_param_explicit<T>(name.c_str());
-}
-
-template <typename T> T Model::get_param(const char* name) const {
-	using namespace internal;
+// specialization for arithmetic types
+template <typename T>
+typename std::enable_if<std::is_arithmetic<typename std::decay<T>::type>::value, void>::type
+Model::set_param(std::string const & name, T value) {
+    using namespace internal;
+    auto scip = get_scip_ptr();
 	switch (get_param_type(name)) {
 	case ParamType::Bool:
-		return cast<T>(get_param_explicit<param_t<ParamType::Bool>>(name));
+        std::cout << fmt::format("Setting bool parameter '{}' to value '{}' ({}).", name, value, typeid(value).name()) << '\n' << std::flush;
+        scip::call(SCIPsetBoolParam, scip, name.c_str(), narrow_cast<param_t<ParamType::Bool>>(value));
+        break;
 	case ParamType::Int:
-		return cast<T>(get_param_explicit<param_t<ParamType::Int>>(name));
+        std::cout << fmt::format("Setting int parameter '{}' to value '{}' ({}).", name, value, typeid(value).name()) << '\n' << std::flush;
+        scip::call(SCIPsetIntParam, scip, name.c_str(), narrow_cast<param_t<ParamType::Int>>(value));
+        break;
 	case ParamType::LongInt:
-		return cast<T>(get_param_explicit<param_t<ParamType::LongInt>>(name));
+        std::cout << fmt::format("Setting longint parameter '{}' to value '{}' ({}).", name, value, typeid(value).name()) << '\n' << std::flush;
+        scip::call(SCIPsetLongintParam, scip, name.c_str(), narrow_cast<param_t<ParamType::LongInt>>(value));
+        break;
 	case ParamType::Real:
-		return cast<T>(get_param_explicit<param_t<ParamType::Real>>(name));
+        std::cout << fmt::format("Setting real parameter '{}' to value '{}' ({}).", name, value, typeid(value).name()) << '\n' << std::flush;
+        scip::call(SCIPsetRealParam, scip, name.c_str(), narrow_cast<param_t<ParamType::Real>>(value));
+        break;
 	case ParamType::Char:
-		return cast<T>(get_param_explicit<param_t<ParamType::Char>>(name));
+        std::cout << fmt::format("Setting char parameter '{}' to value '{}' ({}).", name, value, typeid(value).name()) << '\n' << std::flush;
+        scip::call(SCIPsetCharParam, scip, name.c_str(), narrow_cast<param_t<ParamType::Char>>(value));
+        break;
 	case ParamType::String:
-		return cast<T>(get_param_explicit<param_t<ParamType::String>>(name));
+		throw Exception(fmt::format("Parameter {} does not accept numeric values", name));
+        break;
 	default:
 		assert(false);  // All enum value should be handled
 		// Non void return for optimized build
@@ -275,8 +269,71 @@ template <typename T> T Model::get_param(const char* name) const {
 	}
 }
 
-template <typename T> T Model::get_param(std::string const& name) const {
-	return get_param<T>(name.c_str());
+// specialization for string types
+template <typename T>
+typename std::enable_if<std::is_same<typename std::decay<T>::type, std::string>::value, T>::type
+Model::get_param(std::string const & name) const {
+	using namespace internal;
+    auto scip = get_scip_ptr();
+	switch (get_param_type(name)) {
+	case ParamType::Bool:
+	case ParamType::Int:
+	case ParamType::LongInt:
+	case ParamType::Real:
+	case ParamType::Char:
+	case ParamType::String:
+		throw Exception(fmt::format("Parameter {} does not export into a numeric value", name));
+	default:
+		assert(false);  // All enum value should be handled
+		// Non void return for optimized build
+		throw Exception("Could not find type for given parameter");
+	}
+}
+
+// specialization for arithmetic types
+template <typename T>
+typename std::enable_if<std::is_arithmetic<typename std::decay<T>::type>::value, T>::type
+Model::get_param(std::string const & name) const {
+	using namespace internal;
+    auto scip = get_scip_ptr();
+	switch (get_param_type(name)) {
+	case ParamType::Bool:
+	{
+        SCIP_Bool value;
+        scip::call(SCIPgetBoolParam, scip, name.c_str(), &value);
+		return narrow_cast<T>(value);
+	}
+	case ParamType::Int:
+	{
+        int value;
+        scip::call(SCIPgetIntParam, scip, name.c_str(), &value);
+		return narrow_cast<T>(value);
+	}
+	case ParamType::LongInt:
+	{
+        SCIP_Longint value;
+        scip::call(SCIPgetLongintParam, scip, name.c_str(), &value);
+		return narrow_cast<T>(value);
+	}
+	case ParamType::Real:
+	{
+        SCIP_Real value;
+        scip::call(SCIPgetRealParam, scip, name.c_str(), &value);
+		return narrow_cast<T>(value);
+	}
+	case ParamType::Char:
+	{
+        char value;
+        scip::call(SCIPgetCharParam, scip, name.c_str(), &value);
+		return narrow_cast<T>(value);
+	}
+	case ParamType::String:
+		throw Exception(fmt::format("Parameter {} does not export into a numeric value", name));
+	default:
+		assert(false);  // All enum value should be handled
+		// Non void return for optimized build
+		throw Exception("Could not find type for given parameter");
+	}
 }
 
 }  // namespace scip
