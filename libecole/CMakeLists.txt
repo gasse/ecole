@@ -11,6 +11,7 @@ add_library(
 	src/utility/reverse-control.cpp
 	src/reward/isdone.cpp
 	src/reward/lpiterations.cpp
+	src/reward/nnodes.cpp
 	src/observation/nodebipartite.cpp
 	src/observation/strongbranchingscores.cpp
 	src/environment/branching-dynamics.cpp
